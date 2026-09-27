@@ -1,0 +1,46 @@
+# Data analyst policy: notebooks are free, small queries on non-PII
+# tables are free, big scans need a human, PII tables are never
+# queryable, and exports are never allowed. Rule order matters: the PII
+# deny comes before the size-based rules so a huge PII scan is denied,
+# not approved.
+
+name: data-analyst-policy
+version: 1
+description: Analyst agent. Small clean queries free, PII denied, big scans need approval.
+default: deny
+
+rules:
+  - name: no-pii-tables
+    description: Tables ending in _pii are off limits, whatever the size.
+    decision: deny
+    match:
+      tool: warehouse.query
+      args.table: {regex: ".*_pii$"}
+
+  - name: small-clean-query
+    description: Small queries on ordinary tables just run.
+    decision: allow
+    match:
+      tool: warehouse.query
+      args.table: {exists: true}
+      args.row_limit: {lte: 100000}
+
+  - name: big-scan-needs-approval
+    description: Large scans go to a human before they run.
+    decision: approve
+    match:
+      tool: warehouse.query
+      args.table: {exists: true}
+      args.row_limit: {gt: 100000}
+
+  - name: notebook-runs
+    description: Running a notebook cell is local and safe.
+    decision: allow
+    match:
+      tool: notebook.run
+
+  - name: no-exports
+    description: Data must never leave the warehouse through this agent.
+    decision: deny
+    match:
+      tool: warehouse.export

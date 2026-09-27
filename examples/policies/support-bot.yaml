@@ -1,0 +1,52 @@
+# Support bot policy: read-only helpdesk agent with refund approval gates.
+#
+# The bot may read and comment on tickets assigned to it, search the
+# knowledge base freely, and issue small refunds only after a human
+# approves. Everything else is denied. The {agent} placeholder lets one
+# policy serve every bot instance: it matches the acting agent's name.
+
+name: support-bot-policy
+version: 1
+description: Read-only support bot. Own tickets only, small refunds need approval.
+default: deny
+
+rules:
+  - name: kb-search
+    description: Knowledge base search is always safe.
+    decision: allow
+    match:
+      tool: kb.search
+
+  - name: read-own-ticket
+    description: Read tickets assigned to the acting agent.
+    decision: allow
+    match:
+      tool: tickets.read
+      args.assignee: "{agent}"
+
+  - name: comment-own-ticket
+    description: Comment on tickets assigned to the acting agent.
+    decision: allow
+    match:
+      tool: tickets.comment
+      args.assignee: "{agent}"
+
+  - name: small-refund-needs-approval
+    description: Refunds up to $200 go to a human, never straight through.
+    decision: approve
+    match:
+      tool: refund.issue
+      args.amount: {lte: 200}
+
+  - name: large-refund-denied
+    description: Refunds over $200 are out of scope for this bot.
+    decision: deny
+    match:
+      tool: refund.issue
+      args.amount: {gt: 200}
+
+  - name: no-user-management
+    description: The bot must never touch user accounts.
+    decision: deny
+    match:
+      tool: "users.*"

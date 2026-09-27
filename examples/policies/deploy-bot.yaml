@@ -1,0 +1,51 @@
+# Deploy bot policy: CI and read-only operations are free, anything that
+# changes production needs a human, and prod deploys are only allowed
+# during business hours. Staging deploys need approval but no time
+# window, so the team can test at night without waking anyone.
+
+name: deploy-bot-policy
+version: 1
+description: Deploy bot. Staging needs approval, prod needs approval plus business hours.
+default: deny
+
+rules:
+  - name: read-logs
+    description: Tailing logs never changes anything.
+    decision: allow
+    match:
+      tool: logs.tail
+
+  - name: ci-ops
+    description: CI reruns and status checks are safe to automate.
+    decision: allow
+    match:
+      tool: "ci.*"
+
+  - name: staging-deploy-needs-approval
+    description: Staging deploys go through a human at any hour.
+    decision: approve
+    match:
+      tool: deploy
+      args.env: staging
+
+  - name: prod-deploy-needs-approval-in-hours
+    description: Prod deploys need a human and business hours (UTC).
+    decision: approve
+    match:
+      tool: deploy
+      args.env: prod
+      time:
+        window: "09:00-17:00"
+
+  - name: prod-deploy-denied
+    description: Prod deploys outside business hours are denied outright.
+    decision: deny
+    match:
+      tool: deploy
+      args.env: prod
+
+  - name: no-db-migrations
+    description: Migrations are never automated by this bot.
+    decision: deny
+    match:
+      tool: db.migrate
