@@ -103,9 +103,12 @@ print(decision.decision, "-", decision.reason)
 ```
 
 Try the bundled examples: `examples/policies/` (support bot, deploy
-bot, data analyst), `examples/check_example.py` (five actions against
-the support policy), and `examples/approval_flow.py` (the full
-request-approve-audit loop against throwaway files).
+bot, data analyst, org baseline), `examples/check_example.py` (five
+actions against the support policy), `examples/approval_flow.py` (the
+full request-approve-audit loop against throwaway files),
+`examples/policy_composition.py` (baseline plus team policy under each
+composition strategy), and `examples/explain_dryrun.py` (a rule-by-rule
+trace of a surprising denial, plus a dry run).
 
 ## What the match language can express
 
@@ -113,10 +116,13 @@ request-approve-audit loop against throwaway files).
   `regex:` patterns.
 - Argument checks: exact values, `{gte: 100}` / `{lte: 200}` style
   numeric comparisons, `{in: [...]}`, `{regex: ...}`, `{exists: true}`,
-  `{contains: ...}`.
+  `{contains: ...}`, `{startswith: ...}`, `{endswith: ...}`, and
+  `{length: {max: 5}}` for bounding strings, lists, and dicts.
 - Time windows (`time.window: "09:00-17:00"`, UTC, overnight windows
-  work) for rules like "no prod deploys at night".
-- `any_of` groups for OR conditions.
+  work) for rules like "no prod deploys at night", with optional
+  `time.days: [mon, tue, wed, thu, fri]` for weekday restrictions.
+- `any_of` groups for OR conditions, and `not` blocks for carve-outs
+  (allow `api.*` except `api.admin.*`).
 - `{agent}` / `{args.field}` placeholders, so one policy serves every
   bot instance.
 - Missing fields never match (except `{exists: false}`). A policy must
@@ -125,14 +131,56 @@ request-approve-audit loop against throwaway files).
 Full schema and tips in [docs/policies.md](docs/policies.md).
 Approval flows in [docs/approvals.md](docs/approvals.md). The audit
 log format in [docs/audit-log.md](docs/audit-log.md). CLI reference in
-[docs/cli.md](docs/cli.md).
+[docs/cli.md](docs/cli.md). Policy composition in
+[docs/composition.md](docs/composition.md).
+
+## Policy composition
+
+Real deployments stack policies: an org baseline under team policies.
+Repeat `--policy` and pick the precedence:
+
+```bash
+policy-kit check --policy org-baseline.yaml --policy deploy-bot.yaml \
+  --action planned-action.json --combine deny_overrides
+```
+
+`deny_overrides` (the default) lets the most restrictive decision win,
+so a baseline stays a floor no team policy can punch through.
+`allow_overrides` lets carve-outs win. `first_wins` reads the stack as
+an override chain, most-specific first. The decision names the winning
+policy and the strategy, so the audit log shows how the layers
+combined. Full story in [docs/composition.md](docs/composition.md); the
+Python API is `load_policy_set` / `evaluate_set`.
+
+## Debugging: explain, validate, dry-run
+
+When a decision surprises you, ask why:
+
+```bash
+policy-kit explain --policy policy.yaml --action action.json
+```
+
+It prints the rule-by-rule trace: which rules fired, and for the ones
+that did not, exactly which condition said no. The same trace is
+available from Python as `explain(policy, action)`.
+
+Before a policy ships, check it parses:
+
+```bash
+policy-kit validate policy.yaml org-baseline.yaml
+```
+
+And when you are testing a policy change, `--dry-run` computes the
+decision without recording anything: no approval request, no audit
+log line.
 
 ## Benchmarks
 
-Fixtures under `benchmarks/`: 48 labeled action scenarios across the
-three example policies, each with a note explaining why the expected
+Fixtures under `benchmarks/`: 59 labeled action scenarios across the
+four example policies, each with a note explaining why the expected
 decision is right. Boundary cases included (refund of exactly $200,
-deploy at exactly 17:00, query of exactly 100,000 rows). Run them
+deploy at exactly 17:00, query of exactly 100,000 rows, a Saturday
+morning prod deploy, six filters against a max of five). Run them
 yourself:
 
 ```bash
@@ -143,7 +191,7 @@ Results on the bundled set:
 
 | Metric | Result |
 |---|---|
-| Accuracy (48 labeled scenarios) | 1.00 (48/48) |
+| Accuracy (59 labeled scenarios) | 1.00 (59/59) |
 | Precision / recall / F1 per decision (allow, deny, approve) | 1.00 / 1.00 / 1.00 |
 | Mean evaluation latency | ~35 us per action (median of one run; varies a little by machine) |
 
