@@ -40,14 +40,25 @@ Conditions describe the action being judged. An action is a dict with
   - An operator mapping: `{gte: 100}`, `{lt: 5}`, `{eq: "USD"}`,
     `{ne: "prod"}`, `{in: [a, b]}`, `{not_in: [a, b]}`,
     `{regex: ".*_pii$"}`, `{glob: "logs/*"}`, `{exists: true}`,
-    `{contains: "rm -rf"}`.
+    `{contains: "rm -rf"}`, `{startswith: "SELECT"}`,
+    `{endswith: ".csv"}`, `{length: {max: 5}}` or `{length: 3}`.
+    `startswith` and `endswith` need strings. `length` works on
+    strings, lists, and dicts: an integer means exactly that size, a
+    `{min, max}` mapping bounds it (either bound may be omitted).
   - Missing fields never match, except `{exists: false}` which matches
     only when the field is absent. This is deliberate: a policy must
     never allow something it cannot see.
 - `time.window`: `"HH:MM-HH:MM"` in UTC. The start is inclusive, the
   end is exclusive. Overnight windows like `"22:00-06:00"` work.
+  Add `time.days` with day names (`mon` through `sun`) to restrict to
+  certain weekdays: `time: {window: "09:00-17:00", days: [mon, tue,
+  wed, thu, fri]}`.
 - `any_of`: a list of condition groups; at least one group must match
   (OR). Each group uses the same keys as above.
+- `not`: a condition group that must NOT match. The rule fires only
+  when none of the `not` conditions hold. Use it for carve-outs:
+  `tool: "api.*"` with `not: {tool: "api.admin.*"}` allows the API
+  surface except the admin namespace. `not` blocks cannot nest.
 - Placeholders: `{agent}`, `{tool}`, `{resource}`, and `{args.field}`
   inside a match string are replaced with the action's values before
   matching. This is how one policy serves many agent instances.
