@@ -32,7 +32,9 @@ import yaml
 
 DECISIONS = ("allow", "deny", "approve")
 
-_CONDITION_KEYS = {"agent", "tool", "resource", "time", "any_of"}
+_CONDITION_KEYS = {"agent", "tool", "resource", "time", "any_of", "not"}
+
+DAYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
 
 
 class PolicyError(ValueError):
@@ -66,9 +68,29 @@ def _check_match_block(match: Any, where: str) -> None:
             for i, group in enumerate(value):
                 _check_match_block(group, f"{where}.any_of[{i}]")
         elif key == "time":
-            if not isinstance(value, dict) or set(value) != {"window"}:
+            if not isinstance(value, dict) or "window" not in value:
                 raise PolicyError(f"{where}: 'time' needs exactly a 'window' key")
+            extra = set(value) - {"window", "days"}
+            if extra:
+                raise PolicyError(f"{where}: 'time' has unknown keys {sorted(extra)}")
             _check_window(value["window"], where)
+            days = value.get("days")
+            if days is not None:
+                if (
+                    not isinstance(days, list)
+                    or not days
+                    or any(not isinstance(d, str) or d not in DAYS for d in days)
+                ):
+                    raise PolicyError(
+                        f"{where}: 'time.days' must be a non-empty list of day "
+                        f"names like {[d for d in DAYS]}"
+                    )
+        elif key == "not":
+            if not isinstance(value, dict) or not value:
+                raise PolicyError(f"{where}: 'not' must be a non-empty mapping")
+            if "not" in value:
+                raise PolicyError(f"{where}: 'not' blocks cannot be nested")
+            _check_match_block(value, f"{where}.not")
         elif key in ("agent", "tool", "resource"):
             if not isinstance(value, str) or not value:
                 raise PolicyError(f"{where}: '{key}' must be a non-empty string")
@@ -109,6 +131,9 @@ def _check_value_spec(spec: Any, where: str) -> None:
             "glob",
             "exists",
             "contains",
+            "startswith",
+            "endswith",
+            "length",
         }
         unknown = set(spec) - allowed
         if unknown:
@@ -121,10 +146,42 @@ def _check_value_spec(spec: Any, where: str) -> None:
             raise PolicyError(f"{where}: 'not_in' needs a list")
         if "exists" in spec and not isinstance(spec["exists"], bool):
             raise PolicyError(f"{where}: 'exists' needs true or false")
-        for op in ("regex", "glob", "contains"):
+        for op in ("regex", "glob", "contains", "startswith", "endswith"):
             if op in spec and not isinstance(spec[op], str):
                 raise PolicyError(f"{where}: '{op}' needs a string")
-    elif not isinstance(spec, (str, int, float, bool)) or spec is None:
+        if "length" in spec:
+            _check_length_spec(spec["length"], f"{where}.length")
+    else:
+        _check_plain_value_spec(spec, where)
+
+
+def _check_length_spec(value: Any, where: str) -> None:
+    """Validate a 'length' operator: an int, or a {min, max} mapping."""
+    if isinstance(value, bool):
+        raise PolicyError(f"{where}: 'length' needs a non-negative integer or a min/max mapping")
+    if isinstance(value, int):
+        if value < 0:
+            raise PolicyError(f"{where}: 'length' cannot be negative")
+        return
+    if isinstance(value, dict) and value:
+        unknown = set(value) - {"min", "max"}
+        if unknown:
+            raise PolicyError(f"{where}: 'length' has unknown keys {sorted(unknown)}")
+        for bound in ("min", "max"):
+            bound_value = value.get(bound)
+            if bound_value is not None and (
+                not isinstance(bound_value, int) or isinstance(bound_value, bool) or bound_value < 0
+            ):
+                raise PolicyError(f"{where}: 'length' {bound} must be a non-negative integer")
+        if value.get("min") is not None and value.get("max") is not None:
+            if value["min"] > value["max"]:
+                raise PolicyError(f"{where}: 'length' min cannot exceed max")
+        return
+    raise PolicyError(f"{where}: 'length' needs an integer or a min/max mapping")
+
+
+def _check_plain_value_spec(spec: Any, where: str) -> None:
+    if not isinstance(spec, (str, int, float, bool)) or spec is None:
         raise PolicyError(f"{where}: value must be a string, number, bool, or operator mapping")
 
 
