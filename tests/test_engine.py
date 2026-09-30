@@ -208,3 +208,118 @@ def test_support_bot_spot_checks():
     )
     assert approve.decision == "approve"
     assert approve.rule == "small-refund-needs-approval"
+
+
+def test_not_block_carves_out():
+    p = policy_with([("r", "allow", {"tool": "api.*", "not": {"tool": "api.admin.*"}})])
+    assert evaluate(p, {"tool": "api.users.list"}).decision == "allow"
+    assert evaluate(p, {"tool": "api.admin.reset"}).decision == "deny"
+
+
+def test_not_block_with_args():
+    p = policy_with([("r", "allow", {"tool": "deploy", "not": {"args.env": "prod"}})])
+    assert evaluate(p, {"tool": "deploy", "args": {"env": "staging"}}).decision == "allow"
+    assert evaluate(p, {"tool": "deploy", "args": {"env": "prod"}}).decision == "deny"
+
+
+def test_time_days_filter():
+    p = policy_with(
+        [
+            (
+                "r",
+                "allow",
+                {"tool": "x", "time": {"window": "09:00-17:00", "days": ["mon", "tue"]}},
+            )
+        ]
+    )
+    monday = datetime(2026, 9, 28, 10, 0, tzinfo=timezone.utc)
+    wednesday = datetime(2026, 9, 30, 10, 0, tzinfo=timezone.utc)
+    assert evaluate(p, {"tool": "x"}, now=monday).decision == "allow"
+    assert evaluate(p, {"tool": "x"}, now=wednesday).decision == "deny"
+
+
+def test_startswith_endswith_operators():
+    p = policy_with(
+        [
+            ("r1", "allow", {"args.sql": {"startswith": "SELECT"}}),
+            ("r2", "deny", {"args.name": {"endswith": ".tmp"}}),
+        ]
+    )
+    assert evaluate(p, {"args": {"sql": "SELECT 1"}}).decision == "allow"
+    assert evaluate(p, {"args": {"sql": "DELETE FROM t"}}).decision == "deny"
+    assert evaluate(p, {"args": {"name": "scratch.tmp"}}).decision == "deny"
+    assert evaluate(p, {"args": {"name": "report.csv"}}).decision == "deny"  # default
+    assert evaluate(p, {"args": {"sql": 42}}).decision == "deny"  # not a string
+
+
+def test_length_operator():
+    p = policy_with(
+        [
+            ("bounded", "allow", {"args.filters": {"length": {"max": 3}}}),
+            ("exact", "allow", {"args.code": {"length": 4}}),
+        ]
+    )
+    assert evaluate(p, {"args": {"filters": ["a", "b"]}}).decision == "allow"
+    assert evaluate(p, {"args": {"filters": ["a", "b", "c", "d"]}}).decision == "deny"
+    assert evaluate(p, {"args": {"code": "abcd"}}).decision == "allow"
+    assert evaluate(p, {"args": {"code": "abcde"}}).decision == "deny"
+    assert evaluate(p, {"args": {"code": 1234}}).decision == "deny"  # numbers have no length
+
+
+def test_length_min_bound():
+    p = policy_with([("r", "allow", {"args.tags": {"length": {"min": 1, "max": 2}}})])
+    assert evaluate(p, {"args": {"tags": ["a"]}}).decision == "allow"
+    assert evaluate(p, {"args": {"tags": []}}).decision == "deny"
+
+
+def test_explain_returns_decision_and_traces():
+    from agent_policy_kit import explain
+
+    p = policy_with(
+        [
+            ("first", "allow", {"tool": "a"}),
+            ("second", "deny", {"tool": "b"}),
+        ]
+    )
+    explanation = explain(p, {"tool": "b"})
+    assert explanation.decision.decision == "deny"
+    assert explanation.decision.rule == "second"
+    assert len(explanation.traces) == 2
+    assert explanation.traces[0].matched is False
+    assert explanation.traces[0].misses, "a failed rule should say why"
+    assert explanation.traces[1].matched is True
+    assert explanation.traces[1].hits == ["tool"]
+
+
+def test_explain_miss_messages_name_the_condition():
+    from agent_policy_kit import explain
+
+    p = policy_with([("r", "allow", {"tool": "tickets.read", "args.assignee": "{agent}"})])
+    explanation = explain(p, {"agent": "bot-a", "tool": "tickets.read", "args": {}})
+    assert explanation.decision.decision == "deny"
+    trace = explanation.traces[0]
+    assert any("args.assignee" in miss and "missing" in miss for miss in trace.misses)
+
+
+def test_explain_default_decision_has_empty_trace_hits():
+    from agent_policy_kit import explain
+
+    p = policy_with([], default="deny")
+    explanation = explain(p, {"tool": "x"})
+    assert explanation.decision.decision == "deny"
+    assert explanation.decision.rule is None
+    assert explanation.traces == []
+
+
+def test_org_baseline_spot_checks():
+    from pathlib import Path as P
+
+    baseline = load_policy(
+        P(__file__).resolve().parent.parent / "examples" / "policies" / "org-baseline.yaml"
+    )
+    wednesday = datetime(2026, 9, 30, 10, 0, tzinfo=timezone.utc)
+    saturday = datetime(2026, 10, 3, 10, 0, tzinfo=timezone.utc)
+    assert evaluate(baseline, {"tool": "prod.deploy"}, now=wednesday).decision == "allow"
+    assert evaluate(baseline, {"tool": "prod.deploy"}, now=saturday).decision == "deny"
+    assert evaluate(baseline, {"tool": "api.admin.reset"}).decision == "deny"
+    assert evaluate(baseline, {"tool": "db.destroy"}).decision == "deny"
