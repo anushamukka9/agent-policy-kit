@@ -190,3 +190,164 @@ def test_audit_empty(tmp_path, capsys):
     code = main(["audit", "--audit", str(tmp_path / "empty.log")])
     assert code == 0
     assert "empty" in capsys.readouterr().out
+
+
+def test_validate_good_policy(tmp_path, capsys):
+    code = main(["validate", str(EXAMPLES / "support-bot.yaml")])
+    assert code == 0
+    out = capsys.readouterr().out
+    assert "valid" in out and "support-bot-policy" in out and "6 rule(s)" in out
+
+
+def test_validate_bad_policy_exit_2(tmp_path, capsys):
+    bad = tmp_path / "bad.yaml"
+    bad.write_text("name: x\ndefault: sometimes\n", encoding="utf-8")
+    code = main(["validate", str(bad)])
+    assert code == 2
+    assert "INVALID" in capsys.readouterr().err
+
+
+def test_validate_multiple_mixed(tmp_path, capsys):
+    bad = tmp_path / "bad.yaml"
+    bad.write_text("name: x\ndefault: sometimes\n", encoding="utf-8")
+    good = EXAMPLES / "deploy-bot.yaml"
+    code = main(["validate", str(good), str(bad)])
+    assert code == 2
+    out = capsys.readouterr().out
+    assert "deploy-bot-policy" in out
+
+
+def test_explain_shows_trace(tmp_path, capsys):
+    code = main(
+        [
+            "explain",
+            "--policy",
+            str(EXAMPLES / "support-bot.yaml"),
+            "--action",
+            str(write_action(tmp_path, {"agent": "support-bot", "tool": "users.delete"})),
+        ]
+    )
+    assert code == 0
+    out = capsys.readouterr().out
+    assert "decision: deny" in out
+    assert "rule trace" in out
+    assert "no-user-management" in out
+
+
+def test_explain_miss_reason_visible(tmp_path, capsys):
+    code = main(
+        [
+            "explain",
+            "--policy",
+            str(EXAMPLES / "support-bot.yaml"),
+            "--action",
+            str(
+                write_action(
+                    tmp_path,
+                    {"agent": "support-bot", "tool": "tickets.read", "args": {}},
+                )
+            ),
+        ]
+    )
+    assert code == 0
+    out = capsys.readouterr().out
+    assert "args.assignee" in out and "missing" in out
+
+
+def test_explain_json_format(tmp_path, capsys):
+    code = main(
+        [
+            "explain",
+            "--policy",
+            str(EXAMPLES / "support-bot.yaml"),
+            "--action",
+            str(write_action(tmp_path, {"agent": "support-bot", "tool": "kb.search"})),
+            "--format",
+            "json",
+        ]
+    )
+    assert code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["decision"] == "allow"
+    assert len(payload["traces"]) == 6
+    assert payload["traces"][0]["matched"] is True
+
+
+def test_check_dry_run_records_nothing(tmp_path, capsys):
+    approvals = tmp_path / "approvals.json"
+    audit = tmp_path / "audit.log"
+    code = check(
+        tmp_path,
+        "support-bot.yaml",
+        {"agent": "support-bot", "tool": "refund.issue", "args": {"amount": 50}},
+        extra=[
+            "--approvals",
+            str(approvals),
+            "--audit",
+            str(audit),
+            "--dry-run",
+        ],
+    )
+    assert code == 3
+    out = capsys.readouterr().out
+    assert "decision: approve" in out
+    assert "dry-run" in out
+    assert not approvals.exists()
+    assert not audit.exists()
+
+
+def test_check_multiple_policies_combine(tmp_path, capsys):
+    action = tmp_path / "action.json"
+    action.write_text(
+        json.dumps({"agent": "deploy-bot", "tool": "db.destroy", "args": {}}),
+        encoding="utf-8",
+    )
+    code = main(
+        [
+            "check",
+            "--policy",
+            str(EXAMPLES / "org-baseline.yaml"),
+            "--policy",
+            str(EXAMPLES / "deploy-bot.yaml"),
+            "--action",
+            str(action),
+            "--combine",
+            "deny_overrides",
+        ]
+    )
+    assert code == 2
+    out = capsys.readouterr().out
+    assert "decision: deny" in out
+    assert "deny_overrides" in out
+
+
+def test_check_bad_combine_strategy_exits_2(tmp_path, capsys):
+    import pytest
+
+    with pytest.raises(SystemExit) as excinfo:
+        main(
+            [
+                "check",
+                "--policy",
+                str(EXAMPLES / "org-baseline.yaml"),
+                "--action",
+                str(write_action(tmp_path, {})),
+                "--combine",
+                "sometimes",
+            ]
+        )
+    assert excinfo.value.code == 2
+
+
+def test_check_missing_policy_file_exit_2(tmp_path, capsys):
+    code = main(
+        [
+            "check",
+            "--policy",
+            str(tmp_path / "nope.yaml"),
+            "--action",
+            str(write_action(tmp_path, {})),
+        ]
+    )
+    assert code == 2
+    assert "policy-kit:" in capsys.readouterr().err
