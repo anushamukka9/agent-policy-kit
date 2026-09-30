@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import fnmatch
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
@@ -36,6 +36,32 @@ class Decision:
     reason: str  # one plain-English sentence
     policy: str
     action: dict[str, Any]
+
+
+@dataclass
+class RuleTrace:
+    """How one rule fared against an action.
+
+    ``matched`` tells whether the rule fired. ``hits`` names the
+    conditions that held; ``misses`` explains each condition that
+    failed, in plain words. That is the whole point of
+    :func:`explain`: when a policy surprises you, the trace shows
+    exactly which condition said no.
+    """
+
+    name: str
+    decision: str
+    matched: bool
+    hits: list[str] = field(default_factory=list)
+    misses: list[str] = field(default_factory=list)
+
+
+@dataclass
+class Explanation:
+    """The decision for an action plus the per-rule trace that produced it."""
+
+    decision: Decision
+    traces: list[RuleTrace] = field(default_factory=list)
 
 
 def _lookup(action: dict[str, Any], path: str) -> tuple[bool, Any]:
@@ -115,7 +141,27 @@ def _apply_operator(
         return _match_string(operand, actual, action)
     if op == "contains":
         return isinstance(actual, str) and operand in actual
+    if op == "startswith":
+        return isinstance(actual, str) and actual.startswith(operand)
+    if op == "endswith":
+        return isinstance(actual, str) and actual.endswith(operand)
+    if op == "length":
+        if not isinstance(actual, (str, list, dict)):
+            return False
+        size = len(actual)
+        if isinstance(operand, int):
+            return size == operand
+        low = operand.get("min", 0)
+        high = operand.get("max")
+        return size >= low and (high is None or size <= high)
     return False  # unreachable, validation rejects unknown operators
+
+
+def _day_matches(days: list[str] | None, now: datetime) -> bool:
+    if not days:
+        return True
+    today = now.astimezone(timezone.utc).strftime("%a").lower()
+    return today in days
 
 
 def _window_matches(window: str, now: datetime) -> bool:
@@ -131,52 +177,113 @@ def _window_matches(window: str, now: datetime) -> bool:
 
 def _match_conditions(
     conditions: dict[str, Any], action: dict[str, Any], now: datetime
-) -> tuple[bool, list[str]]:
-    """Evaluate an AND group of conditions. Returns (matched, hit_keys)."""
+) -> tuple[bool, list[str], list[str]]:
+    """Evaluate an AND group of conditions.
+
+    Returns (matched, hits, misses). ``hits`` names the conditions that
+    held; ``misses`` explains each failed condition in plain words, for
+    :func:`explain`.
+    """
     hits: list[str] = []
+    misses: list[str] = []
     for key, spec in conditions.items():
         if key == "any_of":
             sub = [_match_conditions(group, action, now) for group in spec]
-            if not any(ok for ok, _ in sub):
-                return False, []
+            if not any(ok for ok, _, _ in sub):
+                misses.append("no any_of group matched")
+                return False, hits, misses
             hits.append("any_of")
         elif key == "time":
-            if not _window_matches(spec["window"], now):
-                return False, []
-            hits.append(f"time in {spec['window']}")
+            window = spec["window"]
+            days = spec.get("days")
+            if not _window_matches(window, now):
+                misses.append(f"time window {window} not in effect")
+                return False, hits, misses
+            if not _day_matches(days, now):
+                today = now.astimezone(timezone.utc).strftime("%a").lower()
+                misses.append(f"day '{today}' not in [{', '.join(days or [])}]")
+                return False, hits, misses
+            label = f"time in {window}"
+            if days:
+                label += f" on {','.join(days)}"
+            hits.append(label)
         elif key in ("agent", "tool", "resource"):
             found, value = _lookup(action, key)
-            if not found or not _match_string(spec, value, action):
-                return False, []
+            if not found:
+                misses.append(f"{key} missing from action")
+                return False, hits, misses
+            if not _match_string(spec, value, action):
+                misses.append(f"{key} {value!r} did not match {spec!r}")
+                return False, hits, misses
             hits.append(key)
+        elif key == "not":
+            sub_matched, sub_hits, _ = _match_conditions(spec, action, now)
+            if sub_matched:
+                misses.append(f"excluded by not-block (matched: {', '.join(sub_hits)})")
+                return False, hits, misses
+            hits.append("not")
         elif key.startswith("args."):
             found, value = _lookup(action, key)
             if not _match_value_spec(spec, value, found, action):
-                return False, []
+                if not found:
+                    misses.append(f"{key} missing from action")
+                else:
+                    misses.append(f"{key}={value!r} did not satisfy {spec!r}")
+                return False, hits, misses
             hits.append(key)
         else:  # unreachable, validation rejects unknown keys
-            return False, []
-    return True, hits
+            misses.append(f"unknown condition '{key}'")
+            return False, hits, misses
+    return True, hits, misses
+
+
+def _decide(
+    policy: Policy, action: dict[str, Any], now: datetime
+) -> tuple[Decision, list[RuleTrace]]:
+    traces: list[RuleTrace] = []
+    winning: RuleTrace | None = None
+    for rule in policy.rules:
+        matched, hits, misses = _match_conditions(rule.match, action, now)
+        trace = RuleTrace(
+            name=rule.name, decision=rule.decision, matched=matched, hits=hits, misses=misses
+        )
+        traces.append(trace)
+        if matched and winning is None:
+            winning = trace
+    if winning is None:
+        decision = Decision(
+            decision=policy.default,
+            rule=None,
+            reason=f"no rule matched, policy default -> {policy.default}",
+            policy=policy.name,
+            action=action,
+        )
+    else:
+        detail = ", ".join(winning.hits)
+        decision = Decision(
+            decision=winning.decision,
+            rule=winning.name,
+            reason=f"rule '{winning.name}' matched ({detail}) -> {winning.decision}",
+            policy=policy.name,
+            action=action,
+        )
+    return decision, traces
 
 
 def evaluate(policy: Policy, action: dict[str, Any], now: datetime | None = None) -> Decision:
     """Evaluate one action against a policy. First matching rule wins."""
     now = now or datetime.now(timezone.utc)
-    for rule in policy.rules:
-        matched, hits = _match_conditions(rule.match, action, now)
-        if matched:
-            detail = ", ".join(hits)
-            return Decision(
-                decision=rule.decision,
-                rule=rule.name,
-                reason=f"rule '{rule.name}' matched ({detail}) -> {rule.decision}",
-                policy=policy.name,
-                action=action,
-            )
-    return Decision(
-        decision=policy.default,
-        rule=None,
-        reason=f"no rule matched, policy default -> {policy.default}",
-        policy=policy.name,
-        action=action,
-    )
+    decision, _ = _decide(policy, action, now)
+    return decision
+
+
+def explain(policy: Policy, action: dict[str, Any], now: datetime | None = None) -> Explanation:
+    """Evaluate one action and show the rule-by-rule trace.
+
+    Returns the decision plus one :class:`RuleTrace` per rule, so you
+    can see exactly which conditions fired and which said no. This is
+    the debugging companion to :func:`evaluate`.
+    """
+    now = now or datetime.now(timezone.utc)
+    decision, traces = _decide(policy, action, now)
+    return Explanation(decision=decision, traces=traces)
