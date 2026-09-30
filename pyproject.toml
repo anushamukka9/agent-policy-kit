@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "agent-policy-kit"
-version = "0.1.0"
+version = "0.2.0"
 description = "Policy-as-code guardrails for AI agents: YAML rules, deterministic allow/deny decisions, and human-in-the-loop approval gates."
 readme = "README.md"
 license = { text = "MIT" }
