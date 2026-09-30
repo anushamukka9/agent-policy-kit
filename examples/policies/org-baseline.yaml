@@ -1,0 +1,51 @@
+# Org baseline policy: the floor no team policy may go under.
+#
+# This is the composition example: load it together with a team policy
+# (say deploy-bot.yaml) and combine them with --combine deny_overrides.
+# It also exercises the newer match conditions: time.days for weekday
+# restrictions, a not-block for carve-outs, and the startswith and
+# length operators on arguments.
+
+name: org-baseline-policy
+version: 1
+description: Org-wide baseline. Composes with team policies via deny_overrides.
+default: deny
+
+rules:
+  - name: weekday-prod-tools
+    description: Prod tooling is allowed on weekdays, 09:00-17:00 UTC.
+    decision: allow
+    match:
+      tool: "prod.*"
+      time:
+        window: "09:00-17:00"
+        days: [mon, tue, wed, thu, fri]
+
+  - name: read-apis-except-admin
+    description: Reading APIs is fine, but the admin namespace is carved out.
+    decision: allow
+    match:
+      tool: "api.*"
+      not:
+        tool: "api.admin.*"
+
+  - name: safe-select-queries
+    description: Warehouse queries must be SELECTs with at most 5 filters.
+    decision: allow
+    match:
+      tool: warehouse.query
+      args.sql: {startswith: "SELECT"}
+      args.filters: {length: {max: 5}}
+
+  - name: csv-exports-only
+    description: The exporter may only write .csv files.
+    decision: allow
+    match:
+      tool: files.export
+      args.filename: {endswith: ".csv"}
+
+  - name: no-destroy-tools
+    description: Nothing ending in .destroy may run under this baseline.
+    decision: deny
+    match:
+      tool: "*.destroy"
