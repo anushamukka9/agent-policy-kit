@@ -1,5 +1,42 @@
 # CLI reference
 
+## validate
+
+Check policy files for schema errors without evaluating anything.
+Useful in CI and in an editor hook, before a broken policy ships.
+
+```bash
+policy-kit validate policy.yaml org-baseline.yaml
+```
+
+Prints one line per file (`valid` with the policy name and rule
+count, or `INVALID` with the reason) and exits 0 only when every file
+is valid.
+
+## explain
+
+Show the rule-by-rule trace for one action: which rules fired, which
+did not, and exactly which condition said no. This is the debugging
+companion to `check`.
+
+```bash
+policy-kit explain --policy policy.yaml --action action.json
+```
+
+```
+decision: deny
+rule:     (policy default)
+reason:   no rule matched, policy default -> deny
+
+rule trace (6 rules, first match wins):
+  x kb-search (allow)
+      - tool 'users.delete' did not match 'kb.search'
+  ...
+```
+
+`--format json` gives the same trace machine-readable, for editor
+integrations or policy test harnesses.
+
 ## check
 
 Evaluate one action against a policy.
@@ -13,6 +50,21 @@ policy-kit check --policy policy.yaml --action action.json \
 
 The action file is a JSON object with `agent`, `tool`, `args`, and
 optionally `resource`.
+
+Repeat `--policy` to compose several policies into one decision, with
+`--combine` choosing the precedence (`deny_overrides`,
+`allow_overrides`, or `first_wins`; see
+[composition](composition.md)):
+
+```bash
+policy-kit check --policy org-baseline.yaml --policy deploy-bot.yaml \
+  --action planned-action.json --combine deny_overrides
+```
+
+Add `--dry-run` to compute the decision without recording anything:
+no approval request is created, nothing is written to the audit log.
+Use it when you are testing a policy or previewing what a change would
+do.
 
 Exit codes, which are the contract your CI relies on:
 
