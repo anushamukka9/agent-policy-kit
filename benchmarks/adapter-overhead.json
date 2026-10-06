@@ -1,0 +1,25 @@
+{
+  "policy": "agent-frameworks.yaml",
+  "python": "3.12.3",
+  "results": [
+    {
+      "label": "bare evaluate() baseline",
+      "n": 3000,
+      "mean_us": 15.2,
+      "p95_us": 16.0
+    },
+    {
+      "label": "openai-agents tool guardrail",
+      "n": 3000,
+      "mean_us": 42.6,
+      "p95_us": 50.5
+    },
+    {
+      "label": "crewai wrapped tool.run()",
+      "n": 3000,
+      "mean_us": 23.7,
+      "p95_us": 29.2
+    }
+  ],
+  "note": "Adapter overhead per tool call, measured locally. The policy check is microseconds; model latency dominates every real run by orders of magnitude."
+}

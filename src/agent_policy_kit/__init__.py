@@ -4,6 +4,7 @@ Write YAML rules that say what your agents may do. Every action gets a
 deterministic decision: allow, deny, or approve (human-in-the-loop).
 """
 
+from agent_policy_kit.adapters.base import ApprovalRequiredError, PolicyDeniedError
 from agent_policy_kit.approvals import (
     ApprovalStore,
     list_pending,
@@ -16,13 +17,15 @@ from agent_policy_kit.compose import PolicySet, evaluate_set, load_policy_set
 from agent_policy_kit.engine import Decision, Explanation, RuleTrace, evaluate, explain
 from agent_policy_kit.policy import Policy, PolicyError, Rule, load_policy
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 __all__ = [
+    "ApprovalRequiredError",
     "ApprovalStore",
     "Decision",
     "Explanation",
     "Policy",
+    "PolicyDeniedError",
     "PolicyError",
     "PolicySet",
     "Rule",

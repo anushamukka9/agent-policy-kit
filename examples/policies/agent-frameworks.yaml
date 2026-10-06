@@ -1,0 +1,28 @@
+# Policy for the framework-adapter examples (OpenAI Agents SDK, CrewAI).
+#
+# The demo agents can read docs freely, issue small refunds on their
+# own, and must ask a human before moving real money. Everything else
+# is denied. The examples point at this file so you can tweak a rule
+# and watch the adapters change behavior without touching code.
+name: agent-frameworks-policy
+version: 1
+description: Demo policy for the OpenAI Agents SDK and CrewAI adapters.
+default: deny
+rules:
+  - name: docs-are-free-to-read
+    description: Reading docs is harmless; let the agent do it.
+    decision: allow
+    match:
+      tool: docs.search
+  - name: small-refunds-are-fine
+    description: Refunds up to $100 are routine; no human needed.
+    decision: allow
+    match:
+      tool: billing.refund
+      args.amount: {lte: 100}
+  - name: big-refunds-need-a-human
+    description: Real money moves only with approval.
+    decision: approve
+    match:
+      tool: billing.refund
+      args.amount: {gt: 100}

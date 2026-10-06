@@ -108,7 +108,9 @@ actions against the support policy), `examples/approval_flow.py` (the
 full request-approve-audit loop against throwaway files),
 `examples/policy_composition.py` (baseline plus team policy under each
 composition strategy), and `examples/explain_dryrun.py` (a rule-by-rule
-trace of a surprising denial, plus a dry run).
+trace of a surprising denial, plus a dry run). Framework examples live
+in `examples/adapters/` (OpenAI Agents SDK and CrewAI, runnable without
+an API key).
 
 ## What the match language can express
 
@@ -132,7 +134,8 @@ Full schema and tips in [docs/policies.md](docs/policies.md).
 Approval flows in [docs/approvals.md](docs/approvals.md). The audit
 log format in [docs/audit-log.md](docs/audit-log.md). CLI reference in
 [docs/cli.md](docs/cli.md). Policy composition in
-[docs/composition.md](docs/composition.md).
+[docs/composition.md](docs/composition.md). Framework adapters in
+[docs/adapters.md](docs/adapters.md).
 
 ## Policy composition
 
@@ -151,6 +154,48 @@ an override chain, most-specific first. The decision names the winning
 policy and the strategy, so the audit log shows how the layers
 combined. Full story in [docs/composition.md](docs/composition.md); the
 Python API is `load_policy_set` / `evaluate_set`.
+
+## Framework adapters
+
+The core library decides; the adapters enforce. Wrap your framework's
+tool calls and the policy you tested with the CLI is the policy that
+runs in production:
+
+```python
+from agent_policy_kit import ApprovalStore, load_policy
+from agent_policy_kit.adapters import AdapterConfig
+from agent_policy_kit.adapters.openai_agents import wrap_function_tool
+# pip install agent-policy-kit[openai]
+
+config = AdapterConfig(
+    policy=load_policy("policy.yaml"),
+    approval_store=ApprovalStore("approvals.json"),
+    audit_path="audit.log",
+    agent_name="billing-bot",
+)
+
+agent = Agent(
+    name="billing-bot",
+    tools=[wrap_function_tool(billing_refund, config)],
+    ...
+)
+```
+
+Or guard a whole CrewAI crew in one call (`pip install
+agent-policy-kit[crewai]`):
+
+```python
+from agent_policy_kit.adapters.crewai import apply_policy_to_crew
+
+apply_policy_to_crew(crew, config)
+```
+
+Deny stops the tool call. Approve queues a human-approval ticket and
+stops the call; when the human approves, the agent's retry of the same
+action goes through. Every decision lands in the audit log. Per-call
+overhead is microseconds (see Benchmarks). Full guide, decision
+tables, and the approve loop in [docs/adapters.md](docs/adapters.md);
+runnable examples in `examples/adapters/` (no API key needed).
 
 ## Debugging: explain, validate, dry-run
 
@@ -204,6 +249,19 @@ benchmark does it for you. The labeled set is small and hand-written;
 add your own cases to `benchmarks/cases.jsonl` when your policy
 changes.
 
+Adapter overhead (3,000 calls each, `benchmarks/run_adapter_overhead.py`):
+
+| Path | Mean | p95 |
+|---|---|---|
+| bare `evaluate()` | 15.2 us | 16.0 us |
+| OpenAI Agents SDK tool guardrail | 42.6 us | 50.5 us |
+| CrewAI wrapped `tool.run()` | 23.7 us | 29.2 us |
+
+The check is microseconds; model latency dominates every real run by
+four to six orders of magnitude. Guarding every tool call costs
+nothing you will notice. Numbers vary a little by machine; re-run the
+script yourself.
+
 ## CI usage
 
 Gate a deployment on policy. Exit 2 fails the job on deny, exit 3 on
@@ -235,9 +293,10 @@ Copy-paste snippets in [docs/cli.md](docs/cli.md).
 - The audit log is append-only JSONL, not signed. If the trail matters
   for compliance, ship it somewhere tamper-evident. Signing the log is
   on the roadmap.
-- This library decides; it does not enforce. Your code must actually
-  refuse to run denied actions and must actually wait on approvals. A
-  policy nobody checks is a comment.
+- The core library decides; the adapters enforce. If you call
+  `evaluate()` directly, your code must still refuse denied actions
+  and must actually wait on approvals. A policy nobody checks is a
+  comment. If you want enforcement for free, use the adapters.
 
 ## Roadmap
 
@@ -246,8 +305,6 @@ Copy-paste snippets in [docs/cli.md](docs/cli.md).
 - Slack/email notifier hooks for pending requests
 - Policy linter: unreachable rules, shadowed rules, overlapping
   approve/deny pairs
-- Framework adapters (OpenAI Agents SDK, CrewAI) so guarding a tool
-  call is one wrapper
 
 ## License
 

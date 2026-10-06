@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "agent-policy-kit"
-version = "0.2.0"
+version = "0.3.0"
 description = "Policy-as-code guardrails for AI agents: YAML rules, deterministic allow/deny decisions, and human-in-the-loop approval gates."
 readme = "README.md"
 license = { text = "MIT" }
@@ -30,6 +30,8 @@ policy-kit = "agent_policy_kit.cli:main"
 [project.optional-dependencies]
 test = ["pytest>=8"]
 lint = ["ruff>=0.4"]
+openai = ["openai-agents>=0.2"]
+crewai = ["crewai>=0.100"]
 
 [project.urls]
 Homepage = "https://github.com/anushamukka9/agent-policy-kit"
@@ -47,3 +49,8 @@ line-length = 100
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B"]
+
+[tool.ruff.lint.per-file-ignores]
+# Framework adapter tests import the SDKs after pytest.importorskip,
+# so those imports legitimately sit below the skip line.
+"tests/test_adapters_*.py" = ["E402"]
