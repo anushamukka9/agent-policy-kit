@@ -107,8 +107,10 @@ bot, data analyst, org baseline), `examples/check_example.py` (five
 actions against the support policy), `examples/approval_flow.py` (the
 full request-approve-audit loop against throwaway files),
 `examples/policy_composition.py` (baseline plus team policy under each
-composition strategy), and `examples/explain_dryrun.py` (a rule-by-rule
-trace of a surprising denial, plus a dry run). Framework examples live
+composition strategy), `examples/explain_dryrun.py` (a rule-by-rule
+trace of a surprising denial, plus a dry run), and
+`examples/export_example.py` (the support policy exported to Rego and
+Cedar, warnings and all). Framework examples live
 in `examples/adapters/` (OpenAI Agents SDK and CrewAI, runnable without
 an API key).
 
@@ -135,7 +137,8 @@ Approval flows in [docs/approvals.md](docs/approvals.md). The audit
 log format in [docs/audit-log.md](docs/audit-log.md). CLI reference in
 [docs/cli.md](docs/cli.md). Policy composition in
 [docs/composition.md](docs/composition.md). Framework adapters in
-[docs/adapters.md](docs/adapters.md).
+[docs/adapters.md](docs/adapters.md). Exporting to OPA/Rego and
+Cedar in [docs/export.md](docs/export.md).
 
 ## Policy composition
 
@@ -154,6 +157,30 @@ an override chain, most-specific first. The decision names the winning
 policy and the strategy, so the audit log shows how the layers
 combined. Full story in [docs/composition.md](docs/composition.md); the
 Python API is `load_policy_set` / `evaluate_set`.
+
+## Export to OPA/Rego and Cedar
+
+Already running a policy engine? Take the YAML with you:
+
+```bash
+policy-kit export --policy policy.yaml --format rego --output policy.rego
+policy-kit export --policy policy.yaml --format cedar --output policy.cedar
+```
+
+The Rego export is faithful: rule order survives (first match wins,
+exactly like the built-in engine), all three decisions survive, and
+I verified it against real OPA: every one of the 59 bundled
+benchmark scenarios gives the same decision and rule name in both
+engines. The Cedar export is honest about being lossy: Cedar has no
+approve decision (approve rules become forbid, flagged in the
+warnings), no rule order (any forbid beats every permit), and no
+clock, regex, or length operation, so rules using those are left in
+the file as NOT EXPORTED comments with the reason, never silently
+weakened. Every loss is printed as a warning by the CLI and returned
+in `ExportResult.warnings` from Python. Full mapping tables, the
+context shape Cedar expects, and the caveats in
+[docs/export.md](docs/export.md); ready-made exports of the support
+bot policy in `examples/exports/`.
 
 ## Framework adapters
 

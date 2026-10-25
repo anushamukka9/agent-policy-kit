@@ -16,6 +16,8 @@ Examples:
     policy-kit check --policy policy.yaml --action action.json --dry-run
     policy-kit validate policy.yaml org-baseline.yaml
     policy-kit explain --policy policy.yaml --action action.json
+    policy-kit export --policy policy.yaml --format rego --output policy.rego
+    policy-kit export --policy policy.yaml --format cedar
     policy-kit pending --approvals approvals.json
     policy-kit approve apr-3f9a1c --approvals approvals.json --by anusha
     policy-kit deny apr-3f9a1c --approvals approvals.json --by anusha --note "too risky"
@@ -35,6 +37,7 @@ from agent_policy_kit import (
     evaluate,
     evaluate_set,
     explain,
+    export_policy,
     list_pending,
     load_policy,
     load_policy_set,
@@ -189,6 +192,24 @@ def _cmd_explain(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_export(args: argparse.Namespace) -> int:
+    """Export one policy to Rego or Cedar, printing every loss."""
+    try:
+        policy = load_policy(args.policy)
+    except (PolicyError, OSError) as exc:
+        print(f"policy-kit: {exc}", file=sys.stderr)
+        return 2
+    result = export_policy(policy, args.format)
+    for warning in result.warnings:
+        print(f"policy-kit: warning: {warning}", file=sys.stderr)
+    if args.output:
+        Path(args.output).write_text(result.text, encoding="utf-8")
+        print(f"wrote {args.format} export of {policy.name} to {args.output}")
+    else:
+        print(result.text, end="")
+    return 0
+
+
 def _cmd_pending(args: argparse.Namespace) -> int:
     store = ApprovalStore(args.approvals)
     pending = list_pending(store)
@@ -283,6 +304,19 @@ def build_parser() -> argparse.ArgumentParser:
     explain_cmd.add_argument("--action", required=True, help="action JSON file")
     explain_cmd.add_argument("--format", choices=["table", "json"], default="table")
     explain_cmd.set_defaults(func=_cmd_explain)
+
+    export_cmd = sub.add_parser(
+        "export", help="export a policy to OPA/Rego or Cedar (losses are printed as warnings)"
+    )
+    export_cmd.add_argument("--policy", required=True, help="policy YAML file")
+    export_cmd.add_argument(
+        "--format",
+        choices=["rego", "cedar"],
+        default="rego",
+        help="target language (default: rego)",
+    )
+    export_cmd.add_argument("--output", default=None, help="write to this file instead of stdout")
+    export_cmd.set_defaults(func=_cmd_export)
 
     pending = sub.add_parser("pending", help="list pending approval requests")
     pending.add_argument("--approvals", required=True)

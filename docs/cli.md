@@ -79,6 +79,25 @@ store and the id is printed. With `--audit`, every decision is
 appended to the audit log. `--ttl-minutes` sets the approval TTL
 (default 30).
 
+## export
+
+Translate one policy to OPA/Rego or Cedar, for teams that already
+run a policy engine.
+
+```bash
+policy-kit export --policy policy.yaml --format rego --output policy.rego
+policy-kit export --policy policy.yaml --format cedar
+```
+
+Without `--output` the export goes to stdout. The Rego export is
+faithful (rule order and all three decisions preserved). The Cedar
+export is lossy by necessity: every loss (approve rules becoming
+forbid, rules Cedar cannot express left out as comments, the
+ordering difference) is printed to stderr as a warning and still
+lets the file be written, so read the warnings before shipping the
+export. Exit 2 when the policy file does not parse. The full
+mapping and caveats live in [export](export.md).
+
 ## pending
 
 List approval requests still waiting for a human. Expired ones are
