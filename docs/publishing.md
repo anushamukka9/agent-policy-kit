@@ -14,10 +14,10 @@ publishing (no long-lived tokens).
 ## Cutting a release
 
 1. Bump `version` in `pyproject.toml` and `__version__` in
-   `src/rag_canary/__init__.py`. They must match; `test_packaging.py`
+   `src/agent_policy_kit/__init__.py`. They must match; `test_packaging.py`
    enforces it.
 2. Run the full check suite locally: `pytest -q`,
-   `python -m rag_canary.benchmark`, `ruff check src tests`,
+   `python -m agent_policy_kit.benchmark`, `ruff check src tests`,
    `ruff format --check src tests`.
 3. If the benchmark numbers changed, update the README table to match.
    The table must always reflect what the runner prints.
