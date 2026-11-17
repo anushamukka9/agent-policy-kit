@@ -79,6 +79,35 @@ store and the id is printed. With `--audit`, every decision is
 appended to the audit log. `--ttl-minutes` sets the approval TTL
 (default 30).
 
+## simulate
+
+Dry-run one tool call or a batch of scenarios against a policy.
+Prints the decision and the exact rule that decided it, and records
+nothing: the command has no `--approvals` or `--audit` option, so a
+simulation cannot create an approval request or an audit line.
+
+```bash
+policy-kit simulate --policy policy.yaml --tool refund.issue \
+  --agent support-bot --args '{"amount": 50}'
+policy-kit simulate --policy policy.yaml --action action.json
+policy-kit simulate --policy policy.yaml --actions scenarios.json
+policy-kit simulate --policy policy.yaml --actions scenarios.json --format json
+```
+
+Three input forms: `--tool` (inline, with `--agent`, `--resource`,
+and a JSON-object `--args`), `--action` (one action JSON file), and
+`--actions` (a scenario file: JSON list, JSON object with a
+`scenarios` list, or JSONL). Repeat `--policy` to simulate a composed
+set, with `--combine` choosing the precedence.
+
+Exit codes: with no expectations, the code follows the decision
+(single call: 0 allow, 2 deny, 3 approve; batch: the most
+restrictive decision present). When any scenario carries an
+`expect`, the code answers whether the policy behaved as expected:
+0 when every expectation held, 2 when one failed. The full guide,
+including the scenario file shapes, lives in
+[simulate](simulate.md).
+
 ## export
 
 Translate one policy to OPA/Rego or Cedar, for teams that already

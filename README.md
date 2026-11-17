@@ -108,7 +108,10 @@ actions against the support policy), `examples/approval_flow.py` (the
 full request-approve-audit loop against throwaway files),
 `examples/policy_composition.py` (baseline plus team policy under each
 composition strategy), `examples/explain_dryrun.py` (a rule-by-rule
-trace of a surprising denial, plus a dry run), and
+trace of a surprising denial, plus a dry run),
+`examples/simulate_walkthrough.py` (inline, file, and batch
+simulations against the support policy, with the scenario batch in
+`examples/simulate-scenarios.json`), and
 `examples/export_example.py` (the support policy exported to Rego and
 Cedar, warnings and all). Framework examples live
 in `examples/adapters/` (OpenAI Agents SDK and CrewAI, runnable without
@@ -138,7 +141,8 @@ log format in [docs/audit-log.md](docs/audit-log.md). CLI reference in
 [docs/cli.md](docs/cli.md). Policy composition in
 [docs/composition.md](docs/composition.md). Framework adapters in
 [docs/adapters.md](docs/adapters.md). Exporting to OPA/Rego and
-Cedar in [docs/export.md](docs/export.md).
+Cedar in [docs/export.md](docs/export.md). Simulating tool calls
+before they run in [docs/simulate.md](docs/simulate.md).
 
 ## Policy composition
 
@@ -245,6 +249,28 @@ policy-kit validate policy.yaml org-baseline.yaml
 And when you are testing a policy change, `--dry-run` computes the
 decision without recording anything: no approval request, no audit
 log line.
+
+## Simulating before you ship a policy
+
+`simulate` is the rehearsal command. Give it a tool call, inline or
+from a file, and it prints the decision with the exact rule that
+decided it. Give it a batch of named scenarios and it runs them all:
+
+```bash
+policy-kit simulate --policy policy.yaml --tool refund.issue \
+  --agent support-bot --args '{"amount": 50}'
+policy-kit simulate --policy policy.yaml --actions scenarios.json
+```
+
+Simulation records nothing, by construction: the command has no
+approval or audit options at all. Scenarios can carry an `expect`
+decision, which turns the batch into a regression test for your
+policy: edit a rule, re-run the batch, and any decision that moved
+fails with the scenario name and the deciding rule. The Python API
+is `simulate` / `simulate_many` / `simulate_set`, with
+`load_scenarios` for the files. Full guide in
+[docs/simulate.md](docs/simulate.md); runnable walkthrough in
+`examples/simulate_walkthrough.py`.
 
 ## Benchmarks
 

@@ -14,6 +14,8 @@ Examples:
     policy-kit check --policy org-baseline.yaml --policy deploy-bot.yaml \\
         --action action.json --combine deny_overrides
     policy-kit check --policy policy.yaml --action action.json --dry-run
+    policy-kit simulate --policy policy.yaml --tool refund.issue --args '{"amount": 50}'
+    policy-kit simulate --policy policy.yaml --actions scenarios.json
     policy-kit validate policy.yaml org-baseline.yaml
     policy-kit explain --policy policy.yaml --action action.json
     policy-kit export --policy policy.yaml --format rego --output policy.rego
@@ -49,6 +51,7 @@ from agent_policy_kit import (
 )
 from agent_policy_kit.compose import STRATEGIES
 from agent_policy_kit.policy import PolicyError
+from agent_policy_kit.simulate import Scenario, load_scenarios, simulate_many, simulate_set
 
 EXIT_ALLOW = 0
 EXIT_DENY = 2
@@ -121,6 +124,126 @@ def _cmd_check(args: argparse.Namespace) -> int:
         print("dry-run: decision computed, nothing recorded")
 
     return {"allow": EXIT_ALLOW, "deny": EXIT_DENY, "approve": EXIT_APPROVE}[decision.decision]
+
+
+def _cmd_simulate(args: argparse.Namespace) -> int:
+    """Simulate one tool call, an inline call, or a batch of scenarios.
+
+    Simulation never records anything: there is deliberately no
+    --approvals or --audit option here. With no expectations, the exit
+    code follows the decision (single call: 0 allow, 2 deny, 3
+    approve; batch: the most restrictive decision present). When any
+    scenario carries an expectation, the exit code answers whether
+    the policy behaved as expected instead: 0 when every expectation
+    held, 2 when one failed.
+    """
+    try:
+        if len(args.policy) == 1:
+            single = load_policy(args.policy[0])
+            pset = None
+        else:
+            single = None
+            pset = load_policy_set(args.policy, strategy=args.combine)
+    except (PolicyError, OSError, ValueError) as exc:
+        print(f"policy-kit: {exc}", file=sys.stderr)
+        return 2
+
+    is_batch = bool(args.actions)
+    try:
+        if args.actions:
+            scenarios = load_scenarios(args.actions)
+        elif args.action:
+            action = _read_json(args.action)
+            if not isinstance(action, dict):
+                print("policy-kit: action file must contain a JSON object", file=sys.stderr)
+                return 2
+            scenarios = [Scenario(name="action", action=action)]
+        elif args.tool:
+            inline_args: dict[str, Any] = {}
+            if args.args:
+                inline_args = json.loads(args.args)
+                if not isinstance(inline_args, dict):
+                    print("policy-kit: --args must be a JSON object", file=sys.stderr)
+                    return 2
+            action = {"agent": args.agent, "tool": args.tool, "args": inline_args}
+            if args.resource:
+                action["resource"] = args.resource
+            scenarios = [Scenario(name="inline", action=action)]
+        else:
+            print(
+                "policy-kit: simulate needs --action, --actions, or --tool",
+                file=sys.stderr,
+            )
+            return 2
+    except (OSError, json.JSONDecodeError, ValueError) as exc:
+        print(f"policy-kit: cannot read simulation input: {exc}", file=sys.stderr)
+        return 2
+
+    report = simulate_many(single, scenarios) if pset is None else simulate_set(pset, scenarios)
+
+    if args.format == "json":
+        print(
+            json.dumps(
+                {
+                    "results": [
+                        {
+                            "name": r.name,
+                            "decision": r.decision.decision,
+                            "rule": r.decision.rule,
+                            "reason": r.decision.reason,
+                            "policy": r.decision.policy,
+                            "expected": r.expected,
+                            "passed": r.passed,
+                        }
+                        for r in report.results
+                    ],
+                    "counts": report.counts,
+                    "ok": report.ok,
+                },
+                indent=2,
+            )
+        )
+    elif not is_batch:
+        result = report.results[0]
+        decision = result.decision
+        print(f"decision: {decision.decision}")
+        print(f"rule:     {decision.rule or '(policy default)'}")
+        print(f"reason:   {decision.reason}")
+        if result.expected is not None:
+            verdict = "PASS" if result.passed else "FAIL"
+            print(f"expect:   {result.expected} ({verdict})")
+        print("simulate: nothing recorded, no approval requested, no audit line written")
+    else:
+        for result in report.results:
+            line = (
+                f"{result.name}: {result.decision.decision} "
+                f"via {result.decision.rule or '(policy default)'}"
+            )
+            if result.expected is not None:
+                line += f" [expected {result.expected}: {'PASS' if result.passed else 'FAIL'}]"
+            print(line)
+        counts = report.counts
+        print(
+            f"summary: {len(report.results)} scenarios, "
+            f"{counts['allow']} allow, {counts['deny']} deny, {counts['approve']} approve"
+        )
+        if report.failures:
+            print(f"expectations failed: {len(report.failures)}")
+        print("simulate: nothing recorded, no approval requested, no audit line written")
+
+    if any(r.expected is not None for r in report.results):
+        # Expectation mode: the exit code answers "did the policy behave
+        # as expected", not "what was the decision".
+        return EXIT_ALLOW if report.ok else EXIT_DENY
+    if len(report.results) == 1:
+        decision_name = report.results[0].decision.decision
+        return {"allow": EXIT_ALLOW, "deny": EXIT_DENY, "approve": EXIT_APPROVE}[decision_name]
+    counts = report.counts
+    if counts["deny"]:
+        return EXIT_DENY
+    if counts["approve"]:
+        return EXIT_APPROVE
+    return EXIT_ALLOW
 
 
 def _cmd_validate(args: argparse.Namespace) -> int:
@@ -294,6 +417,37 @@ def build_parser() -> argparse.ArgumentParser:
         "--ttl-minutes", type=int, default=30, help="approval request TTL in minutes (default 30)"
     )
     check.set_defaults(func=_cmd_check)
+
+    simulate_cmd = sub.add_parser(
+        "simulate",
+        help="dry-run one tool call or a batch of scenarios; records nothing",
+    )
+    simulate_cmd.add_argument(
+        "--policy",
+        required=True,
+        action="append",
+        help="policy YAML file; repeat to compose several policies",
+    )
+    simulate_cmd.add_argument("--action", default=None, help="single action JSON file")
+    simulate_cmd.add_argument(
+        "--actions",
+        default=None,
+        help="scenario file: JSON list, JSON object with a scenarios list, or JSONL",
+    )
+    simulate_cmd.add_argument("--tool", default=None, help="tool name for an inline simulation")
+    simulate_cmd.add_argument("--agent", default="simulate", help="agent name for --tool mode")
+    simulate_cmd.add_argument("--resource", default=None, help="resource for --tool mode")
+    simulate_cmd.add_argument(
+        "--args", default=None, help="tool arguments as a JSON object string, for --tool mode"
+    )
+    simulate_cmd.add_argument("--format", choices=["table", "json"], default="table")
+    simulate_cmd.add_argument(
+        "--combine",
+        choices=STRATEGIES,
+        default="deny_overrides",
+        help="precedence when several --policy files are given (default: deny_overrides)",
+    )
+    simulate_cmd.set_defaults(func=_cmd_simulate)
 
     validate = sub.add_parser("validate", help="check policy files for schema errors")
     validate.add_argument("policies", nargs="+", help="policy YAML files to validate")
