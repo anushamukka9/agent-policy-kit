@@ -25,8 +25,17 @@ from agent_policy_kit.exporters import (
     export_rego,
 )
 from agent_policy_kit.policy import Policy, PolicyError, Rule, load_policy
+from agent_policy_kit.simulate import (
+    Scenario,
+    SimulationReport,
+    SimulationResult,
+    load_scenarios,
+    simulate,
+    simulate_many,
+    simulate_set,
+)
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 
 __all__ = [
     "EXPORT_FORMATS",
@@ -41,6 +50,9 @@ __all__ = [
     "PolicySet",
     "Rule",
     "RuleTrace",
+    "Scenario",
+    "SimulationReport",
+    "SimulationResult",
     "evaluate",
     "evaluate_set",
     "explain",
@@ -50,10 +62,14 @@ __all__ = [
     "list_pending",
     "load_policy",
     "load_policy_set",
+    "load_scenarios",
     "log_decision",
     "log_resolution",
     "read_tail",
     "request_approval",
     "resolve_approval",
+    "simulate",
+    "simulate_many",
+    "simulate_set",
     "sweep_expired",
 ]
